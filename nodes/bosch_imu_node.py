@@ -102,7 +102,7 @@ def read_from_dev(ser, reg_addr, length):
             continue
 
         if buf_in[0] == START_BYTE_ERR:
-            rospy.logwarn("Something bad when reading")
+            #rospy.logwarn("Something bad when reading")
             return 0
 
         if buf_in[0] != START_BYTE_RESP:
@@ -160,7 +160,7 @@ if __name__ == '__main__':
     port = rospy.get_param('~port', '/dev/ttyUSB0')
     frame_id = rospy.get_param('~frame_id', 'imu_link')
     frequency = rospy.get_param('~frequency', 100)
-    operation_mode = rospy.get_param('~operation_mode', OPER_MODE_NDOF)
+    operation_mode = rospy.get_param('~operation_mode', 0x08)
     axis_remap_config = rospy.get_param('~axis_remap_config', 0x24)
     axis_remap_sign = rospy.get_param('~axis_remap_sign', 0x00)
 
@@ -208,7 +208,9 @@ if __name__ == '__main__':
     rate = rospy.Rate(frequency)
 
     # Factors for unit conversions
-    acc_fact = 1000.0
+    # quat_fact = 16384.0
+    quat_fact = 1.0
+    acc_fact = 100.0
     mag_fact = 16.0
     gyr_fact = 900.0
     seq = 0
@@ -216,6 +218,27 @@ if __name__ == '__main__':
     while not rospy.is_shutdown():
         buf = read_from_dev(ser, ACCEL_DATA, 45)
         if buf != 0:
+
+            #BNO055 covariance matrices derived from datasheet. stdev^2 = variance
+            #see: https://imgur.com/gefq5wd
+            orientation_covariance = [
+            0.0159 , 0 , 0,
+            0, 0.0159, 0,
+            0, 0, 0.0159
+            ]
+
+            angular_velocity_covariance = [
+            0.04, 0 , 0,
+            0 , 0.04, 0,
+            0 , 0 , 0.04
+            ]
+
+            linear_acceleration_covariance = [
+            0.017 , 0 , 0,
+            0 , 0.017, 0,
+            0 , 0 , 0.017
+            ]
+
             # Publish raw data
             imu_raw.header.stamp = rospy.Time.now()
             imu_raw.header.frame_id = frame_id
@@ -224,29 +247,30 @@ if __name__ == '__main__':
             imu_raw.linear_acceleration.x = float(st.unpack('h', st.pack('BB', buf[0], buf[1]))[0]) / acc_fact
             imu_raw.linear_acceleration.y = float(st.unpack('h', st.pack('BB', buf[2], buf[3]))[0]) / acc_fact
             imu_raw.linear_acceleration.z = float(st.unpack('h', st.pack('BB', buf[4], buf[5]))[0]) / acc_fact
-            imu_raw.linear_acceleration_covariance[0] = -1
+            imu_raw.linear_acceleration_covariance = linear_acceleration_covariance
             imu_raw.angular_velocity.x = float(st.unpack('h', st.pack('BB', buf[12], buf[13]))[0]) / gyr_fact
             imu_raw.angular_velocity.y = float(st.unpack('h', st.pack('BB', buf[14], buf[15]))[0]) / gyr_fact
             imu_raw.angular_velocity.z = float(st.unpack('h', st.pack('BB', buf[16], buf[17]))[0]) / gyr_fact
-            imu_raw.angular_velocity_covariance[0] = -1
+            imu_raw.angular_velocity_covariance = angular_velocity_covariance
             pub_raw.publish(imu_raw)
 
             # Publish filtered data
             imu_data.header.stamp = rospy.Time.now()
             imu_data.header.frame_id = frame_id
             imu_data.header.seq = seq
-            imu_data.orientation.w = float(st.unpack('h', st.pack('BB', buf[24], buf[25]))[0])
-            imu_data.orientation.x = float(st.unpack('h', st.pack('BB', buf[26], buf[27]))[0])
-            imu_data.orientation.y = float(st.unpack('h', st.pack('BB', buf[28], buf[29]))[0])
-            imu_data.orientation.z = float(st.unpack('h', st.pack('BB', buf[30], buf[31]))[0])
+            imu_data.orientation.w = float(st.unpack('h', st.pack('BB', buf[24], buf[25]))[0]) / quat_fact
+            imu_data.orientation.x = float(st.unpack('h', st.pack('BB', buf[26], buf[27]))[0]) / quat_fact
+            imu_data.orientation.y = float(st.unpack('h', st.pack('BB', buf[28], buf[29]))[0]) / quat_fact
+            imu_data.orientation.z = float(st.unpack('h', st.pack('BB', buf[30], buf[31]))[0]) / quat_fact
+            imu_data.orientation_covariance = orientation_covariance
             imu_data.linear_acceleration.x = float(st.unpack('h', st.pack('BB', buf[32], buf[33]))[0]) / acc_fact
             imu_data.linear_acceleration.y = float(st.unpack('h', st.pack('BB', buf[34], buf[35]))[0]) / acc_fact
             imu_data.linear_acceleration.z = float(st.unpack('h', st.pack('BB', buf[36], buf[37]))[0]) / acc_fact
-            imu_data.linear_acceleration_covariance[0] = -1
+            imu_data.linear_acceleration_covariance = linear_acceleration_covariance
             imu_data.angular_velocity.x = float(st.unpack('h', st.pack('BB', buf[12], buf[13]))[0]) / gyr_fact
             imu_data.angular_velocity.y = float(st.unpack('h', st.pack('BB', buf[14], buf[15]))[0]) / gyr_fact
             imu_data.angular_velocity.z = float(st.unpack('h', st.pack('BB', buf[16], buf[17]))[0]) / gyr_fact
-            imu_data.angular_velocity_covariance[0] = -1
+            imu_data.angular_velocity_covariance = angular_velocity_covariance
             pub_data.publish(imu_data)
 
             # Publish magnetometer data
